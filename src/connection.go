@@ -12,38 +12,113 @@ import (
 	"io"
 	"log"
 	"net"
+	"strings"
+)
+
+const (
+	JerqVersion = 4
 )
 
 type Connection struct {
-	credentials        *Credentials
-	settings           UserSettings
-	symbolListeners    map[string][]ConnectionListener
-	timestampListeners []ConnectionListener
+	connected               bool
+	credentials             *Credentials
+	settings                UserSettings
+	marketDepthChannels     map[string][]chan Message
+	marketUpdateChannels    map[string][]chan Message
+	marketUpdateAllChannels []chan Message
+	timestampChannels       []chan MessageTimestamp
 }
 
-type ConnectionListener interface {
-	OnBidAsk(MessageBidAsk)
-	OnTimestamp(MessageTimestamp)
-	OnTrade(MessageTrade)
+func (c *Connection) connect() {
+
 }
 
-func (this *Connection) connect() {
+func (c *Connection) buildRequest() string {
+	list := make(map[string]string)
+	for s := range c.marketUpdateChannels {
+		s2 := list[s]
+		s2 += "Ss"
+		list[s] = s2
+	}
 
+	for s := range c.marketDepthChannels {
+		s2 := list[s]
+		s2 += "Ss"
+		list[s] = s2
+	}
+
+	sb := strings.Builder{}
+	count := 0
+	for k, v := range list {
+		if count > 0 {
+			sb.WriteString(",")
+		}
+		sb.WriteString(k + "=" + v)
+		count++
+	}
+
+	return sb.String()
 }
 
 func (c *Connection) Server() {
 }
 
-func (c *Connection) AddListener(symbols []string, l ConnectionListener) {
-	c.timestampListeners = append(c.timestampListeners, l)
+func (c *Connection) RegisterMarketUpdateAll(ch chan Message) {
+	add := true
+	for i, _ := range c.marketUpdateAllChannels {
+		if c.marketUpdateAllChannels[i] == ch {
+			fmt.Println("DON'T ADD", ch)
+
+			add = false
+			break
+		}
+	}
+
+	if add {
+		c.marketUpdateAllChannels = append(c.marketUpdateAllChannels, ch)
+	}
+}
+
+func (c *Connection) RegisterMarketUpdate(symbols []string, ch chan Message) {
+	newlist := make([]string, 0)
 
 	for _, s := range symbols {
-		lst := c.symbolListeners[s]
-		if lst == nil {
-			lst = make([]ConnectionListener, 0)
+		channels := c.marketUpdateChannels[s]
+		if channels == nil {
+			channels = make([]chan Message, 0)
+			newlist = append(newlist, s)
 		}
-		lst = append(lst, l)
-		c.symbolListeners[s] = lst
+
+		add := true
+		for i, _ := range channels {
+			if channels[i] == ch {
+				add = false
+				break
+			}
+		}
+
+		if add {
+			channels = append(channels, ch)
+			c.marketUpdateChannels[s] = channels
+		}
+
+		if c.connected {
+			// TO DO: Maybe we need to reset the connection
+		}
+	}
+}
+
+func (c *Connection) RegisterTimestamp(ch chan MessageTimestamp) {
+	add := true
+	for i, _ := range c.timestampChannels {
+		if c.timestampChannels[i] == ch {
+			add = false
+			break
+		}
+	}
+
+	if add {
+		c.timestampChannels = append(c.timestampChannels, ch)
 	}
 }
 
@@ -70,36 +145,65 @@ func (c *Connection) Start() {
 		}
 	}
 
-	fmt.Fprintf(conn, "LOGIN %s:%s VERSION 4\r\n", c.credentials.Username, c.credentials.Password)
-	reader.ReadLine()
+	fmt.Fprintf(conn, "LOGIN %s:%s\r\n", c.credentials.Username, c.credentials.Password)
+	line, _, err := reader.ReadLine()
+	if err != nil {
+		log.Printf("Network error. %v", err)
+		return
+	}
 
-	fmt.Fprintf(conn, "GO YMM9=Ss,ESM9=Ss\r\n")
+	if line[0] != '+' {
+		log.Printf("Error logging in. Server said: \"%s\"", string(line))
+		return
+	}
+
+	fmt.Fprintf(conn, "VERSION %d\r\n", JerqVersion)
+	line, _, err = reader.ReadLine()
+	if err != nil {
+		log.Printf("Network error. %v", err)
+		return
+	}
+
+	command := c.buildRequest()
+
+	fmt.Printf("Sending \"%s\" to server.\n", command)
+	fmt.Fprintf(conn, "GO %s\r\n", command)
 	for {
 		line, _, _ := reader.ReadLine()
 		m, err := Parse(line)
 		if err == nil {
 			if m != nil {
 				switch m.Type() {
-				case BidAsk:
-					var ba MessageBidAsk
-					ba = m.(MessageBidAsk)
-					for _, l := range c.symbolListeners[ba.Symbol] {
-						l.OnBidAsk(ba)
-					}
 				case Timestamp:
 					var ts MessageTimestamp
 					ts = m.(MessageTimestamp)
-					for _, l := range c.timestampListeners {
-						l.OnTimestamp(ts)
+					for _, ch := range c.timestampChannels {
+						ch <- ts
 					}
-				case Trade:
-					var tr MessageTrade
-					tr = m.(MessageTrade)
-					for _, l := range c.symbolListeners[tr.Symbol] {
-						l.OnTrade(tr)
+				case BidAsk, Refresh, Trade:
+					var symbol string
+					switch m.Type() {
+					case BidAsk:
+						symbol = m.(MessageBidAsk).Symbol
+					case Refresh:
+						symbol = m.(MessageRefresh).Symbol
+					case Trade:
+						symbol = m.(MessageTrade).Symbol
+					}
+
+					if symbol != "" {
+						for _, ch := range c.marketUpdateAllChannels {
+							ch <- m
+						}
+
+						for _, ch := range c.marketUpdateChannels[symbol] {
+							ch <- m
+						}
 					}
 				}
 			}
+		} else {
+			log.Printf("Error parsing jerq data. %v", err)
 		}
 	}
 
@@ -111,8 +215,10 @@ func NewConnection(credentials *Credentials) (*Connection, error) {
 		credentials: credentials,
 	}
 
-	conn.timestampListeners = make([]ConnectionListener, 0)
-	conn.symbolListeners = make(map[string][]ConnectionListener)
+	conn.marketDepthChannels = make(map[string][]chan Message)
+	conn.marketUpdateChannels = make(map[string][]chan Message)
+	conn.marketUpdateAllChannels = make([]chan Message, 0)
+	conn.timestampChannels = make([]chan MessageTimestamp, 0)
 
 	settings, err := GetUserSettings(credentials)
 	if err != nil {

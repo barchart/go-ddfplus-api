@@ -14,24 +14,12 @@ import (
 	"log"
 )
 
-type Listener struct{}
-
-func (l Listener) OnBidAsk(m ddf.MessageBidAsk) {
-	fmt.Println("BA!!!", m)
-}
-
-func (l Listener) OnTimestamp(m ddf.MessageTimestamp) {
-	fmt.Println("TS!!!", m)
-}
-
-func (l Listener) OnTrade(m ddf.MessageTrade) {
-	fmt.Println("TR!!!", m)
-}
-
 func main() {
 	var user = flag.String("u", "", "Username")
 	var pass = flag.String("p", "", "password")
 	flag.Parse()
+
+	var symbols = []string{"^EURUSD"}
 
 	conn, err := ddf.NewConnection(&ddf.Credentials{
 		Username: *user,
@@ -41,9 +29,37 @@ func main() {
 	if err != nil {
 		log.Printf("Error creating connection. %v\n", err)
 	} else {
-		var l Listener
 
-		conn.AddListener([]string{"ESM9"}, &l)
+		db := ddf.InitDB()
+		db.Connect(conn)
+
+		ch := make(chan ddf.MessageTimestamp)
+		go func() {
+			for m := range ch {
+				fmt.Println(">>TS", m)
+			}
+		}()
+		conn.RegisterTimestamp(ch)
+
+		// Connection needs market update registration, but
+		// we null op it here, since we listen for the processed
+		// Quote message
+		chMU := make(chan ddf.Message)
+		go func() {
+			for _ = range chMU {
+
+			}
+		}()
+		conn.RegisterMarketUpdate(symbols, chMU)
+
+		chq := make(chan *ddf.Quote)
+		go func() {
+			for q := range chq {
+				fmt.Println(q)
+			}
+		}()
+		db.Register(symbols, chq)
+
 		conn.Start()
 	}
 }
