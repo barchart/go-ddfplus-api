@@ -1,2 +1,2 @@
-# go-ddfpus-api
-Go ddfpllus API
+# go-ddfplus-api
+Go ddfplus API
