@@ -24,6 +24,7 @@ func ParseFloat(s string, bc string) (float64, error) {
 
 	switch bc {
 	case "2": // 8ths
+
 		n, err := strconv.ParseFloat(s[0:len(s)-1], 64)
 		if err != nil {
 			return 0.0, err
@@ -37,6 +38,10 @@ func ParseFloat(s string, bc string) (float64, error) {
 		return sign * (n + d/8), nil
 
 	case "3": // 16ths
+		if len(s) < 2 {
+			return 0.0, fmt.Errorf("Invalid length %d", len(s))
+		}
+
 		n, err := strconv.ParseFloat(s[0:len(s)-2], 64)
 		if err != nil {
 			return 0.0, err
@@ -50,6 +55,10 @@ func ParseFloat(s string, bc string) (float64, error) {
 		return sign * (n + d/16), nil
 
 	case "4": // 32nds
+		if len(s) < 2 {
+			return 0.0, fmt.Errorf("Invalid length %d", len(s))
+		}
+
 		n, err := strconv.ParseFloat(s[0:len(s)-2], 64)
 		if err != nil {
 			return 0.0, err
@@ -63,6 +72,10 @@ func ParseFloat(s string, bc string) (float64, error) {
 		return sign * (n + d/32), nil
 
 	case "5": // 64th
+		if len(s) < 2 {
+			return 0.0, fmt.Errorf("Invalid length %d", len(s))
+		}
+
 		n, err := strconv.ParseFloat(s[0:len(s)-2], 64)
 		if err != nil {
 			return 0.0, err
@@ -76,6 +89,9 @@ func ParseFloat(s string, bc string) (float64, error) {
 		return sign * (n + d/64), nil
 
 	case "6": // 128ths
+		if len(s) < 3 {
+			return 0.0, fmt.Errorf("Invalid length %d", len(s))
+		}
 		n, err := strconv.ParseFloat(s[0:len(s)-3], 64)
 		if err != nil {
 			return 0.0, err
@@ -89,6 +105,10 @@ func ParseFloat(s string, bc string) (float64, error) {
 		return sign * (n + d/128), nil
 
 	case "7": // 256ths
+		if len(s) < 3 {
+			return 0.0, fmt.Errorf("Invalid length %d", len(s))
+		}
+
 		n, err := strconv.ParseFloat(s[0:len(s)-3], 64)
 		if err != nil {
 			return 0.0, err
